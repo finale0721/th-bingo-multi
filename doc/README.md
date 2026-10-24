@@ -210,7 +210,10 @@ action名：`leave_room`
 
 action名：`stand_up`
 
-请求参数：`null`
+请求参数：`null` 或 `{ "name": "xxx" }`
+
+- 不带 `name`：本人从队伍转为观众。
+- 带 `name`：导播房由导播、无导播房由 A 队队长把指定选手转为观众。
 
 返回参数：`null`
 
@@ -218,7 +221,10 @@ action名：`stand_up`
 
 action名：`sit_down`
 
-请求参数：`null`
+请求参数：`null` 或 `{ "name": "xxx", "team": 0 | 1 }`
+
+- 不带 `name`：本人从观众入座，自动分配到人数较少的一队。
+- 带 `name`：导播房由导播、无导播房由 A 队队长把指定观众入座；`team` 可选，缺省时自动分配。
 
 返回参数：`null`
 
@@ -725,3 +731,139 @@ push_action名：`push_ban_pick`
 |  7  | 右玩家收了 |
 
 </details>
+---
+
+# 多人标准赛协议（multiplayer 分支）
+
+> 本分支只支持标准赛（`room_config.type == 1`）。BP 赛 / Link 赛 / AI 相关 action 已在服务端拒绝或移除。
+> 服务端默认端口 **9998**，客户端 dev server 默认 **9962**（可用 `DEV_PORT` 覆盖）。
+
+## 组队
+
+`room_info` / `get_room` 新增字段（旧字段 `names` / `change_card_count` / `score` 过渡保留）：
+
+```jsonc
+{
+  "teams": [
+    {
+      "key": "A",
+      "members": [{ "name": "alice", "captain": true, "online": true, "order": 0 }],
+      "score": 2,
+      "change_card_count": 3
+    },
+    { "key": "B", "members": [], "score": 1, "change_card_count": 2 }
+  ],
+  "practice": false,
+  "roster_locked": false
+}
+```
+
+| 类型 | 名称 | 参数 |
+|---|---|---|
+| action | `switch_team` | `{ "to": 0｜1, "name"?: string }` |
+| action | `toggle_captain` | `{ "name"?: string }` |
+| push | `push_roster_update` | 与 `teams` / `watchers` / `host` / `started` / `roster_locked` / `practice` 同构的全量快照 |
+
+- `push_roster_update` 是阵容的唯一权威来源；`push_join_room` / `push_stand_up` / `push_sit_down` / `push_leave_room` 仍会发送，但客户端只需用 roster 全量替换。
+- `order` 是成员加入房间的稳定序号；切队不改变该值，客户端按它排序以保持名单位置不变。
+- 导播房的创建者只拥有导播身份，不进入 `members`；无导播房/练习房的创建者才成为 A 队成员。
+- 每队最多 4 人；满员后加入者进入观众。
+- 无导播房由 A 队队长管理（开赛、暂停、结束、重置、刷新、导播操作）。
+- 作品BP 期间 `roster_locked == true`，禁止换人/换队/换队长；只有队长可以提交 BP。
+- 练习房（`room_config.practice == true`）只允许 A 队成员，禁用作品BP，B 队视为永远不操作的队伍。
+
+## 标准赛对局
+
+### `get_all_spells` 返回（节选）
+
+```jsonc
+{
+  "spells": [],
+  "spells2": null,
+  "cells": [
+    {
+      "index": 0,
+      "selected_by_a": ["alice"],
+      "selected_by_b": [],
+      "capture_count_a": 1,
+      "capture_count_b": 1,
+      "captured_by_a": false,
+      "captured_by_b": false,
+      "fully_captured_by": null,
+      "my_selected": true,
+      "content_reveal": 4
+    }
+  ],
+  "cells2": null,
+  "my_selected_index": 0,
+  "my_selected_board": 0,
+  "my_team": 0,
+  "is_captain": true,
+  "capture_standard": 2,
+  "change_card_count": [3, 2],
+  "my_change_pending": false,
+  "my_change_origin_index": -1,
+  "my_change_origin_board": -1,
+  "extra_lines": [],
+  "left_time": 0,
+  "status": 2,
+  "left_cd_time": 0,
+  "room_config": {}
+}
+```
+
+- `cells` / `cells2` 已按查看者裁剪：看不到对方选卡时 `selected_by_*` 为空；中间收取次数不可见时 `capture_count_*` 为 `null`。
+- `content_reveal`：0 完全隐藏 / 1 只显示作品 / 2 作品+关卡 / 3 只显示星级 / 4 完整显示。
+- 单盘 `captured_by_a/b` 表示完整收取；双盘表示该队在本面已收。`fully_captured_by` 始终表示逻辑格完整收取方。
+
+### action
+
+| 名称 | 参数 | 说明 |
+|---|---|---|
+| `select_spell` | `{ "index": 12, "board": 0 }` | 再次选择自己已确认的格子 = 取消选卡 |
+| `finish_spell` | `{ "index": 12, "success": true }` | 使用成员自己的 `selectedBoard` |
+| `change_card` | 无 | 预扣一次换卡；倒计时期间拒绝；重新选中换卡前同一格立即返还，否则下一次收取时结算 |
+| `update_cell_state` | `{ "index": 12, "op": "toggle_select"｜"capture_once"｜"set_captured"｜"clear", "name"?: string, "team"?: 0｜1, "board"?: 0｜1 }` | 导播房仅导播；无导播房任一成员 |
+| `update_change_card_count` | `{ "team": 0｜1, "count": number }` | 仅管理方 |
+
+### push
+
+| 名称 | 内容 | 对象 |
+|---|---|---|
+| `push_cell_update` | `{ "board": 0, "cell": CellView }` | 每个成员/导播/观众（各自裁剪） |
+| `push_my_selection` | `{ "index": -1, "board": 0 }` | 选卡变化的成员 |
+| `push_my_capture` | `{ "index": 12, "board": 0, "left_cd_time": 28000 }` | 实际收取者 |
+| `push_grab_alert` | `{ "index": 12, "board": 0, "by": "alice" }` | 被抢卡的成员 |
+| `push_action_log` | `{ "actor", "team", "op", "index", "board", "capture_count", "capture_standard", "victims" }` | 按可见性逐条下发；看不到整条不下发 |
+| `push_update_change_card_count` | `{ "team": 0, "count": 2, "reason": "change"｜"refund"｜"consume"｜"manual" }` | 房间 |
+| `push_change_state` | `{ "pending": true, "origin_index": 12, "origin_board": 0 }` | 换卡本人 |
+
+### 已移除的 action / 字段
+
+- 移除 action：`bp_game_*`、全部 `link_*`、`normal_dual_board_change`、`update_spell_status`、`cancel_select_spell`、`link_ai_speedrun`。
+- 标准赛响应不再包含 `spell_status`、`bp_data`、`link_data`、`normal_data`、`which_board_*`、`is_portal_*`、`get_on_which_board`。
+- 移除 AI 参数：`use_ai`、`ai_*`。
+- 移除传送门：`portal_count`。双盘新增 `copy_board`（true=复制盘面）。
+- 新增 `room_config.capture_standard`（1/2；双盘固定 1 次）与 `room_config.practice`。
+
+## 回放
+
+`GameLog` 新增 `standard_data`：
+
+```jsonc
+{
+  "standard_data": {
+    "capture_standard": 2,
+    "dual_board": false,
+    "copy_board": false,
+    "board_size": 5,
+    "extra_lines": [],
+    "teams": [{ "key": "A", "members": [{ "name": "alice", "captain": true, "actual_cd_time_ms": 30000 }], "captain": "alice" }],
+    "cells": [ /* CellSnapshot */ ],
+    "cells2": null
+  }
+}
+```
+
+`PlayerAction` 新增 `team` / `op` / `board` / `name` / `victims` / `change_card_count` / `cell_after`。
+回放直接应用 `cell_after` 快照，不根据 `op` 重新推断收取规则；导出分析按 `op` 与 `cell_after` 计算用时、被抢、换卡与 CD。

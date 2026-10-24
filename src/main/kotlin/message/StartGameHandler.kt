@@ -4,27 +4,37 @@ import io.netty.channel.ChannelHandlerContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.tfcc.bingo.Dispatcher
 import org.tfcc.bingo.GameLogger
+import org.tfcc.bingo.Player
 import org.tfcc.bingo.RequestHandler
 import org.tfcc.bingo.Spell
 import org.tfcc.bingo.admin.CustomPoolStore
 import org.tfcc.bingo.decode
 import org.tfcc.bingo.encode
 import org.tfcc.bingo.push
+import org.tfcc.bingo.pushRosterUpdate
 import java.io.ByteArrayInputStream
 import java.util.Base64
 import java.util.zip.InflaterInputStream
 
 object StartGameHandler : RequestHandler {
     @Throws(HandlerException::class)
-    override fun handle(ctx: ChannelHandlerContext, player: org.tfcc.bingo.Player, data: JsonElement?): JsonElement? {
+    override fun handle(ctx: ChannelHandlerContext, player: Player, data: JsonElement?): JsonElement? {
         val room = player.room ?: throw HandlerException("不在房间里")
-        room.isHost(player) || throw HandlerException("没有权限")
+        room.canManage(player) || throw HandlerException("没有权限")
         !room.started || throw HandlerException("游戏已经开始")
-        room.players.all { it != null } || throw HandlerException("玩家没满")
+        room.banPick?.let { it.phase == 9999 || throw HandlerException("作品BP还没结束") }
+        room.bothTeamsReady() || throw HandlerException(
+            if (room.roomConfig.practice) "A队必须有一名队长" else "双方队伍必须各有且仅有一名队长"
+        )
+
+        val obj = data?.jsonObject
+        obj?.get("change_card_base_a")?.jsonPrimitive?.intOrNull?.let { room.changeCardBase[0] = it.coerceIn(0, 99) }
+        obj?.get("change_card_base_b")?.jsonPrimitive?.intOrNull?.let { room.changeCardBase[1] = it.coerceIn(0, 99) }
 
         val customPool = readCustomPool(data)
         if (customPool != null) {
@@ -52,6 +62,7 @@ object StartGameHandler : RequestHandler {
         room.type.onStart(room)
         room.push("push_start_game", room.roomConfig.encode())
         room.gameLogger!!.startLog(room)
+        room.pushRosterUpdate()
         return null
     }
 

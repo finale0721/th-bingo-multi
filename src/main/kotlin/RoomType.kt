@@ -2,6 +2,7 @@ package org.tfcc.bingo
 
 import org.apache.logging.log4j.kotlin.logger
 import org.tfcc.bingo.message.HandlerException
+import org.tfcc.bingo.team.Team
 
 sealed interface RoomType {
     val name: String
@@ -93,27 +94,39 @@ sealed interface RoomType {
     fun initStatus(room: Room) {
         room.started = true
         room.startMs = System.currentTimeMillis()
-        room.spellStatus = Array(room.spells!!.size) { SpellStatus.NONE }
-        room.spellStatusInPlayerClient = Array(room.players.size) { room.spellStatus!!.map { it.value }.toIntArray() }
         room.locked = true
         room.banPick = null
+        room.standardState = null
         room.refreshManager1 = RefreshSpellManager()
         room.refreshManager1!!.init(SpellConfig.getSpellLeftCache())
 
-        // 初始化各选手的实际CD时间
+        // 初始化每名成员的实际CD时间与单局运行态
         val baseCdTime = (room.roomConfig.cdTime ?: 0).toLong() * 1000L
         val cdModifierA = (room.roomConfig.cdModifierA ?: 0).toLong() * 1000L
         val cdModifierB = (room.roomConfig.cdModifierB ?: 0).toLong() * 1000L
-        room.actualCdTime[0] = (baseCdTime + cdModifierA).coerceAtLeast(1000L) // 最低1秒
-        room.actualCdTime[1] = (baseCdTime + cdModifierB).coerceAtLeast(1000L) // 最低1秒
-        // 最高为基础值的3倍
-        room.actualCdTime[0] = room.actualCdTime[0].coerceAtMost(baseCdTime * 3)
-        room.actualCdTime[1] = room.actualCdTime[1].coerceAtMost(baseCdTime * 3)
+        for (member in room.members) {
+            member.resetRoundState()
+            if (baseCdTime <= 0L) {
+                member.actualCdTime = 0L
+            } else {
+                val modifier = if (member.team == Team.A) cdModifierA else cdModifierB
+                member.actualCdTime = (baseCdTime + modifier).coerceAtLeast(1000L).coerceAtMost(baseCdTime * 3)
+            }
+        }
+
+        // 换卡次数 = 基础次数 + (队伍人数 - 1)
+        for (team in Team.entries) {
+            val base = room.changeCardBase[team.index]
+            val size = room.teamSize(team)
+            // 空队伍（练习房 B 队）不分配换卡次数
+            room.changeCardCount[team.index] = if (size == 0) 0 else (base + size - 1).coerceAtLeast(0)
+        }
     }
 
     fun resetData(room: Room) {
         room.spells = null
         room.spells2 = null
+        room.standardState = null
         room.normalData = null
         room.bpData = null
         room.linkData = null
@@ -175,7 +188,7 @@ sealed interface RoomType {
      * @param playerIndex 0:左侧玩家，1:右侧玩家，-1:不是玩家
      */
     fun getAllSpellStatus(room: Room, playerIndex: Int): List<Int> {
-        return room.spellStatus!!.map { it.value }
+        return room.spellStatus?.map { it.value } ?: emptyList()
     }
 
     /** 有符卡的状态被直接设定时，应如何进行后处理 */

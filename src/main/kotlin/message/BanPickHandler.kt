@@ -13,13 +13,12 @@ object BanPickHandler : RequestHandler {
     @Throws(HandlerException::class)
     override fun handle(ctx: ChannelHandlerContext, player: Player, data: JsonElement?): JsonElement? {
         val room = player.room ?: throw HandlerException("不在房间里")
-        val index = room.players.indexOf(player)
-        index >= 0 || throw HandlerException("你不是玩家")
-        val m = data!!.jsonObject
-        val selection = m["selection"]!!.jsonPrimitive.content
+        val member = room.memberOf(player) ?: throw HandlerException("你不是玩家")
+        member.captain || throw HandlerException("只有队长可以操作BP")
+        val selection = data!!.jsonObject["selection"]!!.jsonPrimitive.content
         val bp = room.banPick
         if (bp == null || bp.phase == 9999) throw HandlerException("不是BP环节")
-        val phase = bp.onChoose(index, selection)
+        val phase = bp.onChoose(member.team.index, selection)
         bp.notifyAll(room)
         if (phase == 9999) {
             val (games, ranks) = bp.getGamesAndRanks()

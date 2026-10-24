@@ -66,8 +66,8 @@ class BanPick(private val whoFirst: Int) {
 
     fun notifyAll(room: Room) {
         room.host?.push("push_ban_pick", toPb(-1).encode())
-        for ((idx, player) in room.players.withIndex()) {
-            player?.push("push_ban_pick", toPb(idx).encode())
+        for (member in room.members) {
+            member.player.push("push_ban_pick", toPb(member.team.index).encode())
         }
         for (player in room.watchers) {
             player.push("push_ban_pick", toPb(-1).encode())

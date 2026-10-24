@@ -33,10 +33,6 @@ private fun Channel.push(pushAction: String, pushData: JsonElement?): ChannelFut
 }
 
 fun Player.push(pushAction: String, pushData: JsonElement?, mustOnline: Boolean = false): ChannelFuture? {
-    if (name == Store.ROBOT_NAME) {
-        if (mustOnline) throw HandlerException("对方已离线")
-        else return null
-    }
     val channel = Supervisor.getChannel(name)
     if (channel == null) {
         if (mustOnline) throw HandlerException("对方已离线")
@@ -50,11 +46,51 @@ fun Player.push(pushAction: String, pushData: JsonElement?, mustOnline: Boolean 
 
 fun Room.push(pushAction: String, pushData: JsonElement?) {
     host?.push(pushAction, pushData)
-    players.forEach { it?.push(pushAction, pushData) }
+    members.forEach { it.player.push(pushAction, pushData) }
     watchers.forEach { it.push(pushAction, pushData) }
 }
 
-/** 广播两位选手的连接状态快照，登录/断线时调用；离线期间错过推送的成员靠下一次快照自愈 */
+/** 全量阵容快照：成员列表/观众/队长/队伍分数与换卡次数 */
+fun Room.pushRosterUpdate() {
+    push("push_roster_update", rosterSnapshot())
+}
+
+fun Room.rosterSnapshot(): JsonElement {
+    val teams = org.tfcc.bingo.team.Team.entries.map { team ->
+        val teamMembers = membersOf(team)
+        JsonObject(
+            mapOf(
+                "key" to JsonPrimitive(team.name),
+                "members" to JsonArray(
+                    teamMembers.map { m ->
+                        JsonObject(
+                            mapOf(
+                                "name" to JsonPrimitive(m.name),
+                                "captain" to JsonPrimitive(m.captain),
+                                "online" to JsonPrimitive(Supervisor.getChannel(m.name) != null),
+                                "order" to JsonPrimitive(members.indexOf(m)),
+                            )
+                        )
+                    }
+                ),
+                "score" to JsonPrimitive(score[team.index]),
+                "change_card_count" to JsonPrimitive(changeCardCount[team.index]),
+            )
+        )
+    }
+    return JsonObject(
+        mapOf(
+            "teams" to JsonArray(teams),
+            "watchers" to JsonArray(watchers.map { JsonPrimitive(it.name) }),
+            "host" to JsonPrimitive(host?.name ?: ""),
+            "started" to JsonPrimitive(started),
+            "roster_locked" to JsonPrimitive(isRosterLocked()),
+            "practice" to JsonPrimitive(roomConfig.practice),
+        )
+    )
+}
+
+/** 广播成员连接状态快照，登录/断线时调用；离线期间错过推送的成员靠下一次快照自愈 */
 fun Room.pushPlayersOnline() {
     push("push_player_status", JsonObject(mapOf("players_online" to playersOnline().encode())))
 }
@@ -69,6 +105,8 @@ private val handlers = mapOf(
     "leave_room" to LeaveRoomHandler,
     "stand_up" to StandUpHandler,
     "sit_down" to SitDownHandler,
+    "switch_team" to SwitchTeamHandler,
+    "toggle_captain" to ToggleCaptainHandler,
     "set_phase" to SetPhaseHandler,
     "get_phase" to GetPhaseHandler,
     "start_game" to StartGameHandler,
@@ -80,28 +118,11 @@ private val handlers = mapOf(
     "set_debug_spells" to SetDebugSpellsHandler,
     "get_all_spells" to GetAllSpellsHandler,
     "select_spell" to SelectSpellHandler,
-    "cancel_select_spell" to CancelSelectSpellHandler,
     "finish_spell" to FinishSpellHandler,
-    "update_spell_status" to UpdateSpellStatusHandler,
+    "update_cell_state" to UpdateCellStateHandler,
+    "change_card" to ChangeCardHandler,
     "ban_pick" to BanPickHandler,
     "start_ban_pick" to StartBanPickHandler,
-    "bp_game_ban_pick" to BpGameBanPickHandler,
-    "bp_game_next_round" to BpGameNextRoundHandler,
-    "link_time" to LinkTimeHandler,
-    "link_route" to LinkRouteHandler,
-    "link_undo" to LinkUndoHandler,
-    "link_confirm_route" to LinkConfirmRouteHandler,
-    "link_next_card" to LinkNextCardHandler,
-    "link_finish_card" to LinkFinishCardHandler,
-    "link_skip_card" to LinkSkipCardHandler,
-    "link_force_skip" to LinkForceSkipHandler,
-    "link_undo_finish" to LinkUndoFinishHandler,
-    "link_set_skip_used" to LinkSetSkipUsedHandler,
-    "link_set_phase" to LinkSetPhaseHandler,
-    "link_ai_speedrun" to LinkAiSpeedrunHandler,
-    "link_takeover_route" to LinkTakeoverRouteHandler,
-    "link_release_takeover" to LinkReleaseTakeoverHandler,
-    "normal_dual_board_change" to NormalDualBoardChangeHandler,
     "refresh_one_spell" to RefreshSpellHandler,
     "print_log" to PrintLogHandler,
     "get_room_list" to GetRoomListHandler,
@@ -157,6 +178,7 @@ object Dispatcher {
                             oldChannel?.push("push_kick", null)
                             // 重连登录后重推快照：既通知房内其他人该玩家已上线，也让该玩家补齐离线期间错过的状态
                             player.room?.pushPlayersOnline()
+                            player.room?.pushRosterUpdate()
                         }
 
                         "heart" -> {

@@ -13,6 +13,9 @@ import kotlin.random.Random
 
 object StartCustomGameHandler : RequestHandler {
     override fun handle(ctx: ChannelHandlerContext, player: Player, data: JsonElement?): JsonElement? {
+        // 旧的“自定义盘面开局”依赖旧的 spellStatus 模型，多人标准赛不再支持
+        throw HandlerException("多人模式暂不支持自定义盘面开局")
+        @Suppress("UNREACHABLE_CODE")
         val room = player.room ?: throw HandlerException("不在房间里")
         room.isHost(player) || throw HandlerException("没有权限")
         !room.started || throw HandlerException("游戏已经开始")

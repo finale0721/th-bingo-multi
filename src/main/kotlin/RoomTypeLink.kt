@@ -25,8 +25,7 @@ object RoomTypeLink : RoomType {
 
     override fun onStart(room: Room) {
         val baseCdTime = (room.roomConfig.cdTime ?: 0).toLong() * 1000L
-        room.actualCdTime[0] = baseCdTime.coerceAtLeast(1000L)
-        room.actualCdTime[1] = baseCdTime.coerceAtLeast(1000L)
+        room.members.forEach { it.actualCdTime = baseCdTime.coerceAtLeast(1000L) }
         val board = room.boardSpec
         val startA = startIndex(room, 0)
         val startB = startIndex(room, 1)
@@ -40,10 +39,6 @@ object RoomTypeLink : RoomType {
         linkData.linkIdxB.add(startB)
         linkData.disabledIdx.addAll(room.roomConfig.linkDisabledIdx.distinct())
         room.linkData = linkData
-        if (room.roomConfig.useAI && room.players[1]!!.name.equals(Store.ROBOT_NAME)) {
-            room.linkAiAgent = LinkAIAgent(room)
-            room.linkAiAgent?.start()
-        }
     }
 
     override fun handleNextRound(room: Room) {
@@ -209,8 +204,8 @@ object RoomTypeLink : RoomType {
         linkData.startMsB = now
         linkData.eventA = 1
         linkData.eventB = 1
-        linkData.lastGetTimeA = now - room.actualCdTime[0]
-        linkData.lastGetTimeB = now - room.actualCdTime[1]
+        linkData.lastGetTimeA = now - linkCd(room, 0)
+        linkData.lastGetTimeB = now - linkCd(room, 1)
         if (linkData.linkIdxA.isNotEmpty()) linkData.statusA[linkData.linkIdxA[0]] = LEFT_SELECT.value
         if (linkData.linkIdxB.isNotEmpty()) linkData.statusB[linkData.linkIdxB[0]] = RIGHT_SELECT.value
         pushLinkData(room)
@@ -230,7 +225,7 @@ object RoomTypeLink : RoomType {
         if (status == LEFT_SELECT.value || status == RIGHT_SELECT.value) throw HandlerException("已经选择了这张卡")
         val now = System.currentTimeMillis()
         val lastGet = if (playerIndex == 0) linkData.lastGetTimeA else linkData.lastGetTimeB
-        val remain = lastGet + room.actualCdTime[playerIndex] - now
+        val remain = lastGet + linkCd(room, playerIndex) - now
         if (remain > 1000L) throw HandlerException("还有${remain / 1000 + 1}秒才能选卡")
         if (playerIndex == 0) {
             linkData.statusA[idx] = LEFT_SELECT.value
@@ -259,7 +254,7 @@ object RoomTypeLink : RoomType {
             val allowed = if (route.size > 10) 2 else 1
             if (!force && skipUsedOf(linkData, playerIndex) >= allowed) throw HandlerException("跳过次数已用完")
             val startedAt = if (playerIndex == 0) linkData.lastGetTimeA else linkData.lastGetTimeB
-            val cd = room.actualCdTime[playerIndex]
+            val cd = linkCd(room, playerIndex)
             if (startedAt > 0L && now - startedAt < cd) throw HandlerException("CD期间不能跳过")
             val waitMs = 45_000L
             if (!force && now - startedAt - cd < waitMs) throw HandlerException("还不能跳过这张卡")
@@ -306,7 +301,7 @@ object RoomTypeLink : RoomType {
             linkData.currentStepA = step - 1
             linkData.eventA = 1
             linkData.endMsA = 0
-            linkData.lastGetTimeA = now - room.actualCdTime[0]
+            linkData.lastGetTimeA = now - linkCd(room, 0)
         } else {
             route.drop(step).forEach { linkData.statusB[it] = NONE.value }
             route.drop(step - 1).forEach { linkData.skippedIdxB.remove(it) }
@@ -314,7 +309,7 @@ object RoomTypeLink : RoomType {
             linkData.currentStepB = step - 1
             linkData.eventB = 1
             linkData.endMsB = 0
-            linkData.lastGetTimeB = now - room.actualCdTime[1]
+            linkData.lastGetTimeB = now - linkCd(room, 1)
         }
         updateScores(room)
         pushLinkData(room)
@@ -406,7 +401,7 @@ object RoomTypeLink : RoomType {
         val stop = if (event == 3 && end > 0L) end else now
         val elapsed = (stop - start).coerceAtLeast(0L)
         val step = currentStepOf(linkData, playerIndex)
-        val cd = room.actualCdTime[playerIndex].coerceAtLeast(0L)
+        val cd = linkCd(room, playerIndex).coerceAtLeast(0L)
         val completedCd = ((if (event == 3) step - 1 else step - 1).coerceAtLeast(0)) * cd
         val lastGet = if (playerIndex == 0) linkData.lastGetTimeA else linkData.lastGetTimeB
         val currentCd = if (event == 3 || step <= 0 || lastGet <= 0L) {
@@ -538,4 +533,8 @@ object RoomTypeLink : RoomType {
     private fun pushLinkData(room: Room) {
         room.push("push_link_data", room.linkData!!.encode())
     }
+
+    /** 休眠模式的 CD 兼容读取 */
+    private fun linkCd(room: Room, playerIndex: Int): Long =
+        room.members.firstOrNull { it.team.index == playerIndex }?.actualCdTime ?: 0L
 }

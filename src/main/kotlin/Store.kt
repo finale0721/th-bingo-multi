@@ -7,10 +7,8 @@ import java.io.*
 import java.util.*
 
 object Store {
-    const val ROBOT_NAME = "训练用毛玉"
     private val playerCache = HashMap<String, Player>()
     private val roomCache = HashMap<String, Room>()
-    fun newRobotPlayer() = Player(pwd = ROBOT_NAME, name = ROBOT_NAME)
 
     init {
         Timer().schedule(object : TimerTask() {
@@ -40,7 +38,7 @@ object Store {
                 }
                 outdatedRooms.add(roomId)
                 room.host?.let { outdatedPlayers.add(it.name) }
-                room.players.forEach { p -> p?.let { outdatedPlayers.add(it.name) } }
+                room.members.forEach { outdatedPlayers.add(it.name) }
                 room.watchers.forEach { outdatedPlayers.add(it.name) }
             }
             for (playerName in outdatedPlayers) {
@@ -58,7 +56,6 @@ object Store {
 
     @Throws(HandlerException::class)
     fun getPlayer(name: String, pwd: String? = null): Player {
-        name != ROBOT_NAME || throw HandlerException("不能使用这个名字")
         var player = playerCache[name]
         if (player != null) {
             pwd == null || player.pwd == pwd || throw HandlerException("密码错误")
@@ -91,7 +88,9 @@ object Store {
                 RoomInfoForList(
                     rid = it.roomId,
                     host = it.host?.name,
-                    players = it.players.map { p -> p?.name },
+                    players = it.members.map { m -> m.name },
+                    teamA = it.membersOf(org.tfcc.bingo.team.Team.A).joinToString(" ") { m -> m.name },
+                    teamB = it.membersOf(org.tfcc.bingo.team.Team.B).joinToString(" ") { m -> m.name },
                     lastActive = it.lastOperateMs,
                     isMatching = it.started
                 )

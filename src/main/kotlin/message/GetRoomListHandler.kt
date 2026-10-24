@@ -20,6 +20,10 @@ data class RoomInfoForList(
     val rid: String,
     val host: String?,
     val players: List<String?>,
+    @kotlinx.serialization.SerialName("team_a")
+    val teamA: String,
+    @kotlinx.serialization.SerialName("team_b")
+    val teamB: String,
     val lastActive: Long,
     val isMatching: Boolean
 )

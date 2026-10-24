@@ -42,6 +42,14 @@ data class AdminGameRecordSummary(
     @SerialName("round_winner_name")
     val roundWinnerName: String?,
     val players: List<String>,
+    @SerialName("team_a")
+    val teamA: List<String> = emptyList(),
+    @SerialName("team_b")
+    val teamB: List<String> = emptyList(),
+    @SerialName("team_a_captain")
+    val teamACaptain: String? = null,
+    @SerialName("team_b_captain")
+    val teamBCaptain: String? = null,
     @SerialName("game_type")
     val gameType: Int,
     @SerialName("game_type_name")
@@ -77,6 +85,14 @@ data class AdminGameRecord(
     @SerialName("round_winner_name")
     val roundWinnerName: String?,
     val players: List<String>,
+    @SerialName("team_a")
+    val teamA: List<String> = emptyList(),
+    @SerialName("team_b")
+    val teamB: List<String> = emptyList(),
+    @SerialName("team_a_captain")
+    val teamACaptain: String? = null,
+    @SerialName("team_b_captain")
+    val teamBCaptain: String? = null,
     @SerialName("game_type")
     val gameType: Int,
     @SerialName("game_type_name")

@@ -12,6 +12,9 @@ import org.tfcc.bingo.admin.CustomPoolStore
 import org.tfcc.bingo.admin.GameRecordStore
 
 object Network {
+    /** 多人版默认端口；可用环境变量 TFCC_PORT 覆盖，便于本地并行起多个测试实例 */
+    val PORT: Int = System.getenv("TFCC_PORT")?.toIntOrNull() ?: 9998
+
     fun onInit() {
         GameRecordStore.ensureStorage()
         AdminAuthStore.ensureStorage()
@@ -28,10 +31,10 @@ object Network {
                 .option(ChannelOption.SO_BACKLOG, 128)
                 .childOption(ChannelOption.SO_KEEPALIVE, true)
                 .childHandler(WebSocketServerInitializer())
-            val channelFuture = bootstrap.bind(9999).sync()
+            val channelFuture = bootstrap.bind(PORT).sync()
             channelFuture.addListener(object : ChannelFutureListener {
                 override fun operationComplete(future: ChannelFuture) {
-                    logger.debug(if (channelFuture.isSuccess) "监听端口 9999 成功" else "监听端口 9999 失败")
+                    logger.debug(if (channelFuture.isSuccess) "监听端口 $PORT 成功" else "监听端口 $PORT 失败")
                 }
             })
             channelFuture.channel().closeFuture().sync()

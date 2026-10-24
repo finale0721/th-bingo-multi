@@ -5,7 +5,6 @@ import kotlinx.serialization.json.Json
 import org.apache.logging.log4j.kotlin.logger
 import org.tfcc.bingo.Room
 import org.tfcc.bingo.SpellStatus
-import org.tfcc.bingo.Store
 import org.tfcc.bingo.message.GameLog
 import java.io.File
 import java.nio.charset.StandardCharsets
@@ -55,6 +54,18 @@ object GameRecordStore {
             }
         }
 
+        room.standardState?.let { state ->
+            val single = state.cells.any { it.capturedBy != null }
+            val dual = state.cells2?.let { cells2 ->
+                state.cells.indices.any { i ->
+                    state.cells[i].capturedByA || state.cells[i].capturedByB ||
+                        cells2[i].capturedByA || cells2[i].capturedByB
+                }
+            } ?: false
+            if (single || dual) return true
+        }
+
+        @Suppress("DEPRECATION")
         room.spellStatus?.let { spellStatus ->
             return spellStatus.any { it == SpellStatus.LEFT_GET || it == SpellStatus.RIGHT_GET }
         }
@@ -139,7 +150,7 @@ object GameRecordStore {
         filtered.forEach { item ->
             val normalizedPlayers = item.players
                 .map { it.trim() }
-                .filter { it.isNotEmpty() && it != Store.ROBOT_NAME }
+                .filter { it.isNotEmpty() }
                 .distinct()
             val dayKey = formatDayKey(item.savedAt)
             val monthKey = item.storageMonth ?: resolveMonthKey(item.savedAt)
@@ -262,14 +273,17 @@ object GameRecordStore {
         val savedAt = System.currentTimeMillis()
         val storageMonth = resolveMonthKey(savedAt)
         val players = buildPlayers(room, gameLog)
-        val roundWinnerName = roundWinner?.let { players.getOrNull(it) }
-            ?.takeIf { it.isNotBlank() && it != Store.ROBOT_NAME }
+        val teams = buildTeams(room, gameLog)
+        val roundWinnerName = roundWinner?.let {
+            teams.getOrNull(it)?.captain ?: (if (it == 0) "A队" else "B队")
+        }
         val actionCount = gameLog?.actions?.size ?: 0
         val startedAt = gameLog?.gameStartTimestamp?.takeIf { it > 0 } ?: room.startMs.takeIf { it > 0 }
         val durationMs = gameLog?.actions?.lastOrNull()?.timestamp
             ?: startedAt?.let { savedAt - it }
             ?: 0L
-        val score = gameLog?.score ?: listOf(0, 0)
+        // 摘要中的 score 表示系列赛比分（A/B），单局收取数仍保存在 gameLog.score
+        val score = room.score.toList()
         val gameType = gameLog?.roomConfig?.type ?: room.roomConfig.type
         val isCustomGame = gameLog?.isCustomGame ?: room.isCustomGame
         val boardSize = gameLog?.roomConfig?.boardSize ?: room.roomConfig.boardSize
@@ -283,6 +297,10 @@ object GameRecordStore {
             roundWinner = roundWinner,
             roundWinnerName = roundWinnerName,
             players = players,
+            teamA = teams[0].members,
+            teamB = teams[1].members,
+            teamACaptain = teams[0].captain,
+            teamBCaptain = teams[1].captain,
             gameType = gameType,
             gameTypeName = getGameTypeName(gameType),
             score = score,
@@ -298,10 +316,22 @@ object GameRecordStore {
 
     private fun buildPlayers(room: Room, gameLog: GameLog?): List<String> {
         val playersFromLog = gameLog?.players?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
-        if (playersFromLog.size >= 2) {
-            return playersFromLog.take(2)
+        if (playersFromLog.isNotEmpty()) return playersFromLog
+        return room.members.map { it.name }
+    }
+
+    private data class RecordTeam(val members: List<String>, val captain: String?)
+
+    private fun buildTeams(room: Room, gameLog: GameLog?): List<RecordTeam> {
+        gameLog?.standardData?.teams?.let { teams ->
+            if (teams.size >= 2) {
+                return teams.map { RecordTeam(it.members.map { m -> m.name }, it.captain) }
+            }
         }
-        return room.players.map { it?.name ?: "" }
+        return org.tfcc.bingo.team.Team.entries.map { team ->
+            val teamMembers = room.membersOf(team)
+            RecordTeam(teamMembers.map { it.name }, teamMembers.firstOrNull { it.captain }?.name)
+        }
     }
 
     private fun createRecordId(storageMonth: String): String {
@@ -483,10 +513,10 @@ object GameRecordStore {
         if (item.saveReason != "game_finished") {
             return null
         }
-        item.roundWinnerName?.takeIf { it.isNotBlank() && it != Store.ROBOT_NAME }?.let { return it }
+        item.roundWinnerName?.takeIf { it.isNotBlank() }?.let { return it }
         return item.roundWinner
             ?.let { winnerIndex -> item.players.getOrNull(winnerIndex) }
-            ?.takeIf { it.isNotBlank() && it != Store.ROBOT_NAME }
+            ?.takeIf { it.isNotBlank() }
     }
 
     private fun getRecordInternal(id: String, storageMonthHint: String? = null): AdminGameRecord? {
@@ -538,6 +568,10 @@ object GameRecordStore {
             roundWinner = roundWinner,
             roundWinnerName = roundWinnerName,
             players = players,
+            teamA = teamA,
+            teamB = teamB,
+            teamACaptain = teamACaptain,
+            teamBCaptain = teamBCaptain,
             gameType = gameType,
             gameTypeName = gameTypeName,
             score = score,

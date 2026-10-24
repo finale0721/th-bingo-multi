@@ -5,21 +5,22 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import org.tfcc.bingo.*
-import java.util.*
+import org.tfcc.bingo.standard.CellView
+import org.tfcc.bingo.standard.StandardGame
 
 object GetAllSpellsHandler : RequestHandler {
     @Throws(HandlerException::class)
     override fun handle(ctx: ChannelHandlerContext, player: Player, data: JsonElement?): JsonElement {
         val room = player.room ?: throw HandlerException("不在房间里")
         room.started || throw HandlerException("游戏还未开始")
-        val playerIndex = room.players.indexOf(player)
+        room.standardState != null || throw HandlerException("游戏还未开始")
+        val member = room.memberOf(player)
         var leftTime = 0L
         var status = 0
         var leftCdTime = 0L
         var now = System.currentTimeMillis()
-        val countdown = if (room.type is RoomTypeLink && room.phase >= 2) 0L else room.roomConfig.countdown * 1000L
+        val countdown = room.roomConfig.countdown * 1000L
         val gameTime = room.roomConfig.gameTime * 60000L
-        val cdTime = if (playerIndex >= 0) room.actualCdTime[playerIndex] else 0L // 使用该选手的实际CD时间
         if (room.started) {
             if (now < room.startMs + countdown) {
                 status = 1 // 倒计时
@@ -28,41 +29,65 @@ object GetAllSpellsHandler : RequestHandler {
                 status = 2 // 进行中
                 if (room.pauseBeginMs > 0) {
                     status = 3 // 暂停中
-                    now = room.pauseBeginMs // 暂停中，可以把开始暂停的时间视为当前时间，方便下文计算
+                    now = room.pauseBeginMs
                 }
                 leftTime = room.startMs + countdown + gameTime + room.totalPauseMs - now
-                if (playerIndex >= 0)
-                    leftCdTime = (cdTime - (now - room.lastGetTime[playerIndex])).coerceAtLeast(0L)
+                if (member != null) {
+                    leftCdTime = (member.actualCdTime - (now - member.lastGetTime)).coerceAtLeast(0L)
+                }
             } else {
                 status = 4 // 已结束
             }
         }
-        val spellStatus = room.type.getAllSpellStatus(room, playerIndex)
-        if (playerIndex >= 0) {
-            room.spellStatusInPlayerClient!![playerIndex] = spellStatus.toIntArray()
-        }
         return AllSpellsResponse(
             spells = room.spells!!,
-            spellStatus = spellStatus,
+            spells2 = room.spells2,
+            cells = StandardGame.cellViews(room, 0, member),
+            cells2 = if (room.roomConfig.dualBoard > 0) StandardGame.cellViews(room, 1, member) else null,
+            mySelectedIndex = member?.selectedIndex ?: -1,
+            mySelectedBoard = member?.selectedBoard ?: 0,
+            myTeam = member?.team?.index,
+            isCaptain = member?.captain ?: false,
+            captureStandard = room.standardState!!.captureStandard,
+            changeCardCount = room.changeCardCount.toList(),
+            myChangePending = member?.changePending ?: false,
+            myChangeOriginIndex = member?.changeOriginIndex ?: -1,
+            myChangeOriginBoard = member?.changeOriginBoard ?: -1,
             leftTime = leftTime,
             status = status,
             leftCdTime = leftCdTime,
-            bpData = room.bpData,
-            linkData = room.linkData,
-            normalData = room.normalData,
-            spells2 = room.spells2,
-            roomConfig = room.roomConfig
+            extraLines = room.standardState!!.extraLines,
+            roomConfig = room.roomConfig,
         ).encode()
     }
 }
 
 @Serializable
 class AllSpellsResponse(
-    /** 25张符卡 */
     val spells: Array<Spell>,
-    /** 25张符卡的收取状态 */
-    @SerialName("spell_status")
-    val spellStatus: List<Int>,
+    val spells2: Array<Spell>?,
+    val cells: List<CellView>,
+    @SerialName("cells2")
+    val cells2: List<CellView>?,
+    @SerialName("my_selected_index")
+    val mySelectedIndex: Int,
+    @SerialName("my_selected_board")
+    val mySelectedBoard: Int,
+    @SerialName("my_team")
+    val myTeam: Int?,
+    @SerialName("is_captain")
+    val isCaptain: Boolean,
+    @SerialName("capture_standard")
+    val captureStandard: Int,
+    /** A/B 队共享换卡次数 */
+    @SerialName("change_card_count")
+    val changeCardCount: List<Int>,
+    @SerialName("my_change_pending")
+    val myChangePending: Boolean,
+    @SerialName("my_change_origin_index")
+    val myChangeOriginIndex: Int,
+    @SerialName("my_change_origin_board")
+    val myChangeOriginBoard: Int,
     /** 倒计时剩余时间，单位：毫秒 */
     @SerialName("left_time")
     val leftTime: Long,
@@ -71,17 +96,8 @@ class AllSpellsResponse(
     /** 选卡cd剩余时间，单位：毫秒 */
     @SerialName("left_cd_time")
     val leftCdTime: Long,
-    /** bp赛的相关数据 */
-    @SerialName("bp_data")
-    val bpData: BpData?,
-    /** link赛的相关数据 */
-    @SerialName("link_data")
-    val linkData: LinkData?,
-    /** 标准赛的相关数据 */
-    @SerialName("normal_data")
-    val normalData: NormalData?,
-    /** 25张符卡 (B Side) */
-    val spells2: Array<Spell>?,
+    @SerialName("extra_lines")
+    val extraLines: List<List<Int>>,
     @SerialName("room_config")
     val roomConfig: RoomConfig,
 )

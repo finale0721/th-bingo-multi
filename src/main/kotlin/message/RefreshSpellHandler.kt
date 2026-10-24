@@ -16,15 +16,10 @@ object RefreshSpellHandler : RequestHandler {
         val m = data!!.jsonObject
         val room = player.room ?: throw HandlerException("不在房间里")
         room.started || throw HandlerException("游戏还没开始")
-        if (room.host != null) { // 自己是房主则有权限
+        if (room.host != null) { // 导播房只有导播可以刷新
             room.host === player || throw HandlerException("没有权限")
-        } else { // 无房主模式，只要是选手就有权限
-            player in room.players || throw HandlerException("没有权限")
-        }
-        if (room.host === player && room.linkData != null) {
-            if (room.phase == 1) {
-                throw HandlerException("link赛符卡还未选完，暂不能操作")
-            }
+        } else { // 无导播房，任一成员可刷新
+            room.memberOf(player) != null || throw HandlerException("没有权限")
         }
 
         val boardIdx = m["board_idx"]!!.jsonPrimitive.int
